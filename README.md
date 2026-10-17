@@ -50,26 +50,29 @@ of `tmux.conf`.
 
 ## Key bindings
 
-Prefix is `Ctrl+a`.
+Prefix is `Ctrl+a`. Every tmux binding goes through it — there are no
+prefix-less bindings.
 
 | Keys | Action |
 |---|---|
-| `Alt+h/j/k/l` | Move between panes (no prefix) |
-| `Alt+Shift+h/j/k/l` | Resize pane by 5 (no prefix) |
+| `prefix h/j/k/l` | Move between panes (one hop per prefix) |
+| `prefix H/J/K/L` | Resize pane by 5 (repeats: `prefix H H H` within 500ms) |
 | `prefix \|` / `prefix -` | Split horizontal / vertical |
 | `prefix t` | New window |
 | `prefix c` | Copy mode (vi keys; `v` select, `y` copy) |
 | `prefix f` | Sessionizer popup |
 | `prefix p` | Last session |
 | `prefix q` | Quit session (confirm), switching elsewhere first |
-| `prefix K` | Kill session (confirm) |
+| `prefix X` | Kill session (confirm) |
 | `prefix r` | Reload config |
 
 Pane navigation is intentionally **not** shared with Neovim: `Ctrl+h/j/k/l`
-moves between nvim splits, `Alt+h/j/k/l` moves between tmux panes. No
-vim-tmux-navigator on either side, so neither config depends on the other.
-(Ctrl+Shift was the first choice, but gnome-terminal/VTE sends the same byte
-for `Ctrl+H` and `Ctrl+Shift+H`, so tmux can't distinguish them.)
+moves between nvim splits, `prefix h/j/k/l` moves between tmux panes. No
+vim-tmux-navigator on either side, so neither config depends on the other,
+and Alt is left free for apps.
+
+`prefix h/j/k/l/H/J/K/L` override tmux defaults you may know from elsewhere:
+`prefix l` (last window) and `prefix L` (last session — use `prefix p`).
 
 ## Sessionizer
 
