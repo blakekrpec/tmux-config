@@ -1,0 +1,3 @@
+# Cloned at pinned commits by the workstation tmux role.
+plugins/
+__pycache__/

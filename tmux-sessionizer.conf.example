@@ -1,0 +1,7 @@
+# Seeded to ~/.config/tmux-sessionizer/tmux-sessionizer.conf by the workstation
+# `tmux` role, once. It is per-machine and never overwritten — edit it freely.
+#
+# Directories whose immediate children (TS_MAX_DEPTH) become sessionizer entries.
+# Append :N to a path to override the depth for that path, e.g. ~/src:2.
+TS_SEARCH_PATHS=(~ ~/.config)
+TS_MAX_DEPTH=1

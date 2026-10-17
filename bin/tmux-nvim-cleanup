@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+set -u
+
+timeout_minutes=3
+dry_run=false
+
+usage() {
+    cat <<'EOF'
+Usage: tmux-nvim-cleanup [--timeout MINUTES] [--dry-run]
+
+Close Neovim panes in detached tmux sessions that have been inactive longer
+than the timeout. The default timeout is 3 minutes.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --timeout)
+        if [[ $# -lt 2 ]]; then
+            echo "Error: --timeout requires a value in minutes." >&2
+            exit 2
+        fi
+        timeout_minutes="$2"
+        shift 2
+        ;;
+    --dry-run)
+        dry_run=true
+        shift
+        ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "Error: unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+done
+
+if [[ ! "$timeout_minutes" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Error: timeout must be a positive whole number of minutes." >&2
+    exit 2
+fi
+
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "Error: tmux is not installed or is not in PATH." >&2
+    exit 1
+fi
+
+if ! tmux list-sessions >/dev/null 2>&1; then
+    exit 0
+fi
+
+now=$(date +%s)
+timeout_seconds=$((timeout_minutes * 60))
+declare -a requested_panes=()
+declare -a requested_sessions=()
+declare -a requested_inactive_minutes=()
+
+while IFS=$'\t' read -r session_name session_activity session_attached pane_id pane_command; do
+    [[ "$pane_command" == "nvim" ]] || continue
+    [[ "$session_attached" == "0" ]] || continue
+    [[ "$session_activity" =~ ^[0-9]+$ ]] || continue
+
+    inactive_seconds=$((now - session_activity))
+    ((inactive_seconds >= timeout_seconds)) || continue
+
+    if [[ "$dry_run" == "true" ]]; then
+        printf 'Would close nvim in %s (%s; inactive %dm)\n' \
+            "$session_name" "$pane_id" "$((inactive_seconds / 60))"
+        continue
+    fi
+
+    # Recheck immediately before acting in case a client attached meanwhile.
+    if [[ "$(tmux display-message -p -t "$pane_id" '#{session_attached}' 2>/dev/null)" != "0" ]]; then
+        continue
+    fi
+
+    tmux send-keys -t "$pane_id" Escape
+    tmux send-keys -t "$pane_id" ':qa' Enter
+    requested_panes+=("$pane_id")
+    requested_sessions+=("$session_name")
+    requested_inactive_minutes+=("$((inactive_seconds / 60))")
+    printf 'Requested nvim exit in %s (%s; inactive %dm)\n' \
+        "$session_name" "$pane_id" "$((inactive_seconds / 60))"
+done < <(
+    tmux list-panes -a -F \
+        '#{session_name}	#{session_activity}	#{session_attached}	#{pane_id}	#{pane_current_command}'
+)
+
+if ((${#requested_panes[@]} > 0)); then
+    declare -a notified_panes=()
+
+    # auto-session may need several seconds to save during VimLeave.
+    for _ in {1..30}; do
+        sleep 1
+        waiting=false
+
+        for i in "${!requested_panes[@]}"; do
+            [[ "${notified_panes[$i]:-false}" == "true" ]] && continue
+
+            pane_command=$(
+                tmux display-message -p -t "${requested_panes[$i]}" \
+                    '#{pane_current_command}' 2>/dev/null || true
+            )
+
+            # A modified buffer can make :qa refuse to exit; notify only after nvim is gone.
+            if [[ "$pane_command" == "nvim" ]]; then
+                waiting=true
+                continue
+            fi
+
+            case "$pane_command" in
+            bash | dash | fish | ksh | sh | zsh)
+                cleanup_time=$(date '+%Y-%m-%d %H:%M:%S %Z')
+                console_command="printf '\nNeovim instance automatically cleaned up on $cleanup_time\n'"
+                tmux send-keys -t "${requested_panes[$i]}" -l "$console_command"
+                tmux send-keys -t "${requested_panes[$i]}" Enter
+                ;;
+            esac
+
+            if command -v notify-send >/dev/null 2>&1 && ! notify-send \
+                --app-name="tmux-nvim-cleanup" \
+                --icon="nvim" \
+                "Neovim closed" \
+                "Session: ${requested_sessions[$i]}
+Inactive: ${requested_inactive_minutes[$i]} minutes"; then
+                printf 'Failed to send notification for %s (%s)\n' \
+                    "${requested_sessions[$i]}" "${requested_panes[$i]}" >&2
+            fi
+            notified_panes[$i]=true
+        done
+
+        [[ "$waiting" == "true" ]] || break
+    done
+fi

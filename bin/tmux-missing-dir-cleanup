@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+set -u
+
+dry_run=false
+
+usage() {
+    cat <<'EOF'
+Usage: tmux-missing-dir-cleanup [--dry-run]
+
+Close detached tmux sessions whose original working directory no longer exists.
+Sessions with a Neovim instance that refuses :qa are left running.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --dry-run)
+        dry_run=true
+        shift
+        ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "Error: unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+done
+
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "Error: tmux is not installed or is not in PATH." >&2
+    exit 1
+fi
+
+if ! tmux list-sessions >/dev/null 2>&1; then
+    exit 0
+fi
+
+while IFS=$'\t' read -r session_name session_path session_attached; do
+    [[ "$session_attached" == "0" ]] || continue
+    [[ ! -d "$session_path" ]] || continue
+
+    if [[ "$dry_run" == "true" ]]; then
+        printf 'Would close session %s (missing: %s)\n' "$session_name" "$session_path"
+        continue
+    fi
+
+    # Recheck immediately before acting in case a client attached or the path returned.
+    session_attached=$(
+        tmux display-message -p -t "$session_name" '#{session_attached}' 2>/dev/null || true
+    )
+    [[ "$session_attached" == "0" ]] || continue
+    [[ ! -d "$session_path" ]] || continue
+
+    mapfile -t nvim_panes < <(
+        tmux list-panes -s -t "$session_name" -F '#{pane_id}	#{pane_current_command}' |
+            while IFS=$'\t' read -r pane_id pane_command; do
+                [[ "$pane_command" == "nvim" ]] && printf '%s\n' "$pane_id"
+            done
+    )
+
+    for pane_id in "${nvim_panes[@]}"; do
+        tmux send-keys -t "$pane_id" Escape
+        tmux send-keys -t "$pane_id" ':qa' Enter
+    done
+
+    if ((${#nvim_panes[@]} > 0)); then
+        for _ in {1..30}; do
+            sleep 1
+            nvim_running=false
+
+            for pane_id in "${nvim_panes[@]}"; do
+                pane_command=$(
+                    tmux display-message -p -t "$pane_id" '#{pane_current_command}' \
+                        2>/dev/null || true
+                )
+                if [[ "$pane_command" == "nvim" ]]; then
+                    nvim_running=true
+                    break
+                fi
+            done
+
+            [[ "$nvim_running" == "true" ]] || break
+        done
+
+        if [[ "$nvim_running" == "true" ]]; then
+            printf 'Skipped session %s: Neovim did not exit cleanly\n' "$session_name" >&2
+            continue
+        fi
+    fi
+
+    if tmux kill-session -t "$session_name"; then
+        printf 'Closed session %s (missing: %s)\n' "$session_name" "$session_path"
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send \
+                --app-name="tmux-missing-dir-cleanup" \
+                --icon="utilities-terminal" \
+                "Tmux session closed" \
+                "Session: $session_name
+Missing directory: $session_path" ||
+                printf 'Failed to send notification for %s\n' "$session_name" >&2
+        fi
+    fi
+done < <(tmux list-sessions -F '#{session_name}	#{session_path}	#{session_attached}')

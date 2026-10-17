@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -u
+
+current_session=$(tmux display-message -p '#{session_id}')
+
+tmux switch-client -l 2>/dev/null || true
+selected_session=$(tmux display-message -p '#{session_id}')
+
+if [[ "$selected_session" == "$current_session" ]]; then
+    tmux display-popup -w 80% -h 80% -E "tmux-sessionizer"
+    selected_session=$(tmux display-message -p '#{session_id}')
+fi
+
+# Keep the current session alive if the picker was cancelled.
+if [[ "$selected_session" != "$current_session" ]]; then
+    tmux kill-session -t "$current_session"
+fi

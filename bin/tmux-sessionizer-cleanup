@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: tmux-sessionizer-cleanup [--list]
+
+Review sessions whose project directory is missing. Tab toggles a selection,
+Ctrl-A selects all, Ctrl-D deselects all, Enter reviews the batch, Esc cancels.
+Type "delete" at the confirmation prompt to kill only the selected sessions.
+Killing a session terminates its panes and running programs, not filesystem data.
+
+--list prints candidates without opening the picker or deleting anything.
+
+Uses tmux-sessionizer's configuration and parent_directory session naming.
+Restored sessions pointing at ~ are checked against depth-1 search roots.
+Dots and underscores are matched using sessionizer's naming rules; displayed
+project paths are inferred, not proof of the original directory spelling.
+Unrecognized sessions are included only if their recorded session_path is missing.
+EOF
+}
+
+mode=${1:-}
+if [[ $mode == --help || $mode == -h ]]; then
+    usage
+    exit 0
+fi
+if (( $# > 1 )) || [[ -n $mode && $mode != --list ]]; then
+    usage >&2
+    exit 2
+fi
+command -v tmux >/dev/null || { echo "tmux is required." >&2; exit 1; }
+if [[ $mode != --list ]]; then
+    command -v fzf >/dev/null || { echo "fzf is required." >&2; exit 1; }
+fi
+
+TS_SEARCH_PATHS=()
+TS_EXTRA_SEARCH_PATHS=()
+config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux-sessionizer/tmux-sessionizer.conf"
+[[ ! -f $config ]] || source "$config"
+[[ ! -f tmux-sessionizer.conf ]] || source tmux-sessionizer.conf
+if [[ ${#TS_SEARCH_PATHS[@]} -eq 0 ]]; then
+    TS_SEARCH_PATHS=("$HOME" "$HOME/personal" "$HOME/personal/dev/env/.config")
+fi
+TS_SEARCH_PATHS+=("${TS_EXTRA_SEARCH_PATHS[@]}")
+
+session_name_from_path() {
+    local path=${1%/} parent name
+    name=${path##*/}
+    parent=${path%/*}
+    parent=${parent##*/}
+    if [[ -n $parent && $parent != . && $parent != / ]]; then
+        name="${parent}_${name}"
+    fi
+    printf '%s\n' "${name//./_}"
+}
+
+candidates() {
+    local entry root depth dirs path name prefix id created attached sessions reason
+    local -A existing=() roots=()
+    for entry in "${TS_SEARCH_PATHS[@]}"; do
+        root=$entry
+        depth=${TS_MAX_DEPTH:-1}
+        if [[ $entry =~ ^([^:]+):([0-9]+)$ ]]; then
+            root=${BASH_REMATCH[1]}
+            depth=${BASH_REMATCH[2]}
+        fi
+        [[ $root == / ]] || root=${root%/}
+        if [[ ! -d $root || ! -r $root || ! -x $root ]]; then
+            printf 'Skipping unavailable search root: %s\n' "$root" >&2
+            continue
+        fi
+        dirs=$(find "$root" -mindepth 1 -maxdepth "$depth" -path '*/.git' -prune -o -type d -print) || return
+        while IFS= read -r path; do
+            [[ -n $path ]] || continue
+            existing["$(session_name_from_path "$path")"]=1
+        done <<< "$dirs"
+        if [[ $depth == 1 && $root != / ]]; then
+            prefix=${root##*/}
+            # Duplicate prefixes are ambiguous: do not infer a deleted project.
+            if [[ ${roots["${prefix//./_}"]+present} ]]; then
+                roots["${prefix//./_}"]=""
+            else
+                roots["${prefix//./_}"]=$root
+            fi
+        fi
+    done
+    sessions=$(tmux list-sessions -F $'#{session_id}\t#{session_created}\t#{session_name}\t#{session_attached}\t#{session_path}') || return
+    while IFS=$'\t' read -r id created name attached path; do
+        reason=""
+        if [[ -z $path ]]; then
+            printf 'Skipping session with no recorded directory: %s\n' "$name" >&2
+            continue
+        fi
+        if [[ ! -d $path ]]; then
+            reason="missing recorded directory: $path"
+        elif [[ ! ${existing["$name"]+present} ]]; then
+            for prefix in "${!roots[@]}"; do
+                root=${roots[$prefix]}
+                if [[ -n $root && $name == "${prefix}_"* ]]; then
+                    reason="missing project (inferred): $root/${name#"${prefix}_"}"
+                    break
+                fi
+            done
+        fi
+        [[ -z $reason ]] || printf '%s\t%s\t%s\t%s client(s)\t%s\n' "$id" "$created" "$name" "$attached" "$reason"
+    done <<< "$sessions"
+}
+
+rows=$(candidates) || exit 1
+if [[ -z $rows ]]; then
+    echo "No sessions with missing directories found."
+    exit 0
+fi
+if [[ $mode == --list ]]; then
+    printf '%s\n' "$rows" | cut -f1,3-
+    exit 0
+fi
+if selected=$(printf '%s\n' "$rows" | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= fzf \
+    --multi --delimiter=$'\t' --with-nth=3.. \
+    --prompt='Missing directories > ' \
+    --header='Tab: toggle | Ctrl-A: all | Ctrl-D: none | Enter: review | Esc: cancel' \
+    --bind='ctrl-a:select-all,ctrl-d:deselect-all'); then
+    [[ -n $selected ]] || exit 0
+else
+    status=$?
+    case $status in
+        1|130) exit 0 ;;
+        *) exit "$status" ;;
+    esac
+fi
+printf '\nSelected sessions (all panes and running programs will terminate):\n'
+printf '%s\n' "$selected" | cut -f1,3-
+printf '\nType "delete" to kill these sessions; anything else cancels: '
+IFS= read -r answer || exit 0
+[[ $answer == delete ]] || exit 0
+
+# Recheck the directory and session identity after the user confirms.
+current=$(candidates) || exit 1
+mapfile -t batch <<< "$selected"
+# Killing the session hosting this utility must be the final operation.
+if [[ -n ${TMUX_PANE:-} ]]; then
+    current_id=$(tmux display-message -p -t "$TMUX_PANE" '#{session_id}') || exit 1
+    for index in "${!batch[@]}"; do
+        if [[ ${batch[index]%%$'\t'*} == "$current_id" ]]; then
+            last=$((${#batch[@]} - 1))
+            row=${batch[last]}
+            batch[last]=${batch[index]}
+            batch[index]=$row
+            break
+        fi
+    done
+fi
+failed=0
+for row in "${batch[@]}"; do
+    id=${row%%$'\t'*}
+    if ! grep -Fxq -- "$row" <<< "$current"; then
+        printf 'Skipped changed or recovered session: %s\n' "$id" >&2
+    elif tmux kill-session -t "$id"; then
+        printf 'Deleted session: %s\n' "$id"
+    else
+        failed=1
+    fi
+done
+exit "$failed"
