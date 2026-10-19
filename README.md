@@ -31,7 +31,7 @@ needed. Requires tmux >= 3.3 (`allow-passthrough`). Ubuntu 24.04 ships 3.4.
 | `bin/tmux-sessionizer-cleanup` | Interactive: pick and kill sessions whose project dir is gone |
 | `bin/tmux-missing-dir-cleanup` | Non-interactive: kill detached sessions whose dir is gone |
 | `bin/tmux-nvim-cleanup` | Close nvim in detached sessions idle longer than `--timeout` minutes |
-| `tmux-sessionizer.conf.example` | Seed for `~/.config/tmux-sessionizer/tmux-sessionizer.conf` (per machine) |
+| `tmux-sessionizer.conf.example` | Empty template for the per-machine `~/.config/tmux-sessionizer/tmux-sessionizer.conf` (never committed) |
 | `tests/` | `python3 tests/test_tmux_sessionizer_cleanup.py` (uses a fake tmux) |
 
 The cleanup scripts all support `--dry-run` (or `--list`) and only act on
@@ -81,8 +81,12 @@ running sessions. Picking a directory creates a session named
 `<parent>_<dir>` with a three-pane layout. If the directory (or `~`) has a
 `.tmux-sessionizer` file, it is sourced into the new session.
 
-Per-machine config lives at `~/.config/tmux-sessionizer/tmux-sessionizer.conf`;
-see the comment header in `bin/tmux-sessionizer` for every option.
+Search paths are **per machine and never committed** — treat
+`tmux-sessionizer.conf.example` like a `.env.example`. It ships with an empty
+`TS_SEARCH_PATHS=()` (which falls back to `~`); the workstation role copies it
+to `~/.config/tmux-sessionizer/tmux-sessionizer.conf` once and never touches
+it again. Add your machine's project folders there. See the comment header in
+`bin/tmux-sessionizer` for every option.
 
 ## Credits
 

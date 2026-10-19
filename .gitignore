@@ -1,3 +1,5 @@
 # Cloned at pinned commits by the workstation tmux role.
 plugins/
 __pycache__/
+# Per-machine sessionizer config; only the .example is committed.
+tmux-sessionizer.conf

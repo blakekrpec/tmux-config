@@ -1,7 +1,18 @@
-# Seeded to ~/.config/tmux-sessionizer/tmux-sessionizer.conf by the workstation
-# `tmux` role, once. It is per-machine and never overwritten — edit it freely.
+# Template for ~/.config/tmux-sessionizer/tmux-sessionizer.conf — like a
+# .env.example. The workstation `tmux` role copies it there once and never
+# overwrites it; that copy is per-machine and lives outside any repo.
+# Put your machine's project layout there, not here.
 #
-# Directories whose immediate children (TS_MAX_DEPTH) become sessionizer entries.
-# Append :N to a path to override the depth for that path, e.g. ~/src:2.
-TS_SEARCH_PATHS=(~ ~/.config)
+# Each entry's immediate children become picker entries. Append :N to a path
+# to search N levels deep for just that path. Left empty, the picker falls
+# back to ~ (depth TS_MAX_DEPTH).
+#
+# Example:
+#   TS_SEARCH_PATHS=(
+#       ~
+#       ~/.config
+#       ~/projects
+#       ~/projects/some-monorepo
+#   )
+TS_SEARCH_PATHS=()
 TS_MAX_DEPTH=1

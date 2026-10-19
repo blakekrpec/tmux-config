@@ -40,7 +40,7 @@ config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux-sessionizer/tmux-sessionizer.conf
 [[ ! -f $config ]] || source "$config"
 [[ ! -f tmux-sessionizer.conf ]] || source tmux-sessionizer.conf
 if [[ ${#TS_SEARCH_PATHS[@]} -eq 0 ]]; then
-    TS_SEARCH_PATHS=("$HOME" "$HOME/personal" "$HOME/personal/dev/env/.config")
+    TS_SEARCH_PATHS=("$HOME")
 fi
 TS_SEARCH_PATHS+=("${TS_EXTRA_SEARCH_PATHS[@]}")
 
